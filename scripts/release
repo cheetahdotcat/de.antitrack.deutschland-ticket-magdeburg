@@ -1,0 +1,31 @@
+#!/bin/sh
+# A signed release APK in dist/, named by version, with its SHA-256 and the
+# signing certificate printed. Asks for the keystore password unless
+# ANTITRACK_KEYSTORE_PASSWORD is set; it travels as environment only.
+#   scripts/release
+#   ANTITRACK_KEYSTORE=/abs/path.jks scripts/release
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+ANTITRACK_KEYSTORE=${ANTITRACK_KEYSTORE:-$HOME/.local/share/antitrack/release.jks}
+[ -f "$ANTITRACK_KEYSTORE" ] || { echo "no keystore at $ANTITRACK_KEYSTORE (scripts/keystore makes one)" >&2; exit 2; }
+if [ -z "${ANTITRACK_KEYSTORE_PASSWORD:-}" ]; then
+  printf 'keystore password: ' >&2
+  stty -echo; read -r ANTITRACK_KEYSTORE_PASSWORD; stty echo; echo >&2
+fi
+export ANTITRACK_KEYSTORE ANTITRACK_KEYSTORE_PASSWORD
+
+scripts/gradle clean :app:assembleRelease
+
+apk=app/build/outputs/apk/release/app-release.apk
+[ -f "$apk" ] || { echo "no signed APK produced" >&2; exit 1; }
+version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+mkdir -p dist
+out="dist/d-ticket-magdeburg-$version.apk"
+cp "$apk" "$out"
+
+engine=${CONTAINER_ENGINE:-podman}
+image=${ANTITRACK_IMAGE:-localhost/antitrack/droid-build}
+"$engine" run --rm -v "$root:/work:Z" -w /work "$image" \
+  apksigner verify --print-certs "$out" | grep -E "DN|SHA-256"
+sha256sum "$out"

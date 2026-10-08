@@ -1,0 +1,18 @@
+# Every push and pull request: a debug build, no secrets involved.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  debug:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: ./gradlew --no-daemon --console=plain :app:assembleDebug

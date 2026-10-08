@@ -1,0 +1,35 @@
+# The build toolchain for D-Ticket Magdeburg: JDK 17, the Android SDK, and
+# Gradle to bootstrap the wrapper. Nothing from the host is assumed;
+# scripts/gradle runs every Gradle invocation in this image. Every fetch
+# below is anonymous, and Gradle's own downloads land in a named volume.
+FROM docker.io/library/eclipse-temurin:17-jdk
+
+ARG CMDLINE_TOOLS=11076708
+ARG PLATFORM=android-35
+ARG BUILD_TOOLS=35.0.0
+ARG GRADLE=8.10.2
+
+ENV ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    GRADLE_HOME=/opt/gradle
+ENV PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/35.0.0:$GRADLE_HOME/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      unzip wget git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p $ANDROID_HOME/cmdline-tools && cd /tmp && \
+    wget -q https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS}_latest.zip -O ct.zip && \
+    unzip -q ct.zip -d $ANDROID_HOME/cmdline-tools && \
+    mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest && rm ct.zip
+
+RUN yes | sdkmanager --licenses >/dev/null && \
+    sdkmanager "platform-tools" "platforms;${PLATFORM}" "build-tools;${BUILD_TOOLS}" >/dev/null
+
+RUN cd /tmp && wget -q https://services.gradle.org/distributions/gradle-${GRADLE}-bin.zip -O g.zip && \
+    unzip -q g.zip -d /opt && mv /opt/gradle-${GRADLE} $GRADLE_HOME && rm g.zip
+
+# scripts/gradle runs as the host user (--userns=keep-id): the SDK must be
+# readable, and the tools AGP touches must be writable, by anyone.
+RUN chmod -R a+rwX $ANDROID_HOME
+WORKDIR /work

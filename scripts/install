@@ -1,0 +1,17 @@
+#!/bin/sh
+# Install on the phone attached to adb and start it.
+#   scripts/install            the debug build (built if missing)
+#   scripts/install release    the newest dist/ APK
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+if [ "${1:-debug}" = "release" ]; then
+  apk=$(ls -t dist/d-ticket-magdeburg-*.apk 2>/dev/null | head -1)
+  [ -n "$apk" ] || { echo "no release in dist/ (scripts/release)" >&2; exit 2; }
+else
+  apk=app/build/outputs/apk/debug/app-debug.apk
+  [ -f "$apk" ] || scripts/gradle :app:assembleDebug
+fi
+adb install -r "$apk"
+adb shell am start -n com.succ.antitrack.magdeburg/.MainActivity >/dev/null
+echo "installed $apk"

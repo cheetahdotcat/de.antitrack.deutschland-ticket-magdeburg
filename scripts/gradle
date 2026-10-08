@@ -1,0 +1,57 @@
+#!/bin/sh
+# Gradle in a container: no host toolchain is assumed. Builds the toolchain
+# image from build/Containerfile on first use, then runs the wrapper in it
+# with this checkout mounted. Gradle's cache is a named volume so a build
+# survives between runs.
+#   scripts/gradle :app:assembleDebug
+#   ANTITRACK_KEYSTORE=… ANTITRACK_KEYSTORE_PASSWORD=… scripts/gradle :app:assembleRelease
+#   scripts/gradle --rebuild-image
+#   scripts/gradle --bootstrap      (re)generate the wrapper with the image's Gradle
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+engine=${CONTAINER_ENGINE:-podman}
+image=${ANTITRACK_IMAGE:-localhost/antitrack/droid-build}
+
+if [ "${1:-}" = "--rebuild-image" ]; then
+  shift
+  "$engine" build -t "$image" "$root/build"
+  [ $# -gt 0 ] || exit 0
+fi
+if ! "$engine" image exists "$image"; then
+  "$engine" build -t "$image" "$root/build"
+fi
+
+cmd='mkdir -p "$HOME/.android" && exec ./gradlew --console=plain "$@"'
+if [ "${1:-}" = "--bootstrap" ]; then
+  shift
+  cmd='mkdir -p "$HOME/.android" && exec gradle --console=plain wrapper --gradle-version 8.10.2 "$@"'
+fi
+tty=""
+[ -t 0 ] && tty="-t"
+
+# Release signing (app/build.gradle.kts): the keystore is mounted read-only
+# at a fixed path and the passwords pass as environment, never as argv.
+sign_args=""
+if [ -n "${ANTITRACK_KEYSTORE:-}" ]; then
+  sign_args="-v $ANTITRACK_KEYSTORE:/keystore.jks:ro,Z -e ANTITRACK_KEYSTORE=/keystore.jks -e ANTITRACK_KEYSTORE_PASSWORD -e ANTITRACK_KEY_ALIAS -e ANTITRACK_KEY_PASSWORD"
+fi
+
+# The MVB client (app/build.gradle.kts) may come from the environment too.
+for v in MVB_CLIENT_ID MVB_CLIENT_SECRET; do
+  eval "[ -n \"\${$v:-}\" ]" && sign_args="$sign_args -e $v"
+done
+
+# --userns=keep-id: files the build writes into the checkout belong to the
+# host user. HOME and user.home (the JVM takes it from passwd, not $HOME)
+# hold the debug keystore so every build signs alike; they and the Gradle
+# cache live in a named volume, owned by that user on first use.
+# shellcheck disable=SC2086
+exec "$engine" run --rm -i $tty \
+  --userns=keep-id \
+  -v "$root:/work:Z" -w /work \
+  -v antitrack-droid-gradle:/gradle-cache \
+  -e HOME=/gradle-cache/home -e GRADLE_USER_HOME=/gradle-cache/gradle \
+  -e JAVA_TOOL_OPTIONS=-Duser.home=/gradle-cache/home \
+  -e CI=1 -e TERM="${TERM:-dumb}" \
+  $sign_args \
+  "$image" sh -c "$cmd" -- "$@"

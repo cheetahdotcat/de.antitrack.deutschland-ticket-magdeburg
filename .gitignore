@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+/app/build/
+/build/*
+!/build/Containerfile
+/dist/
+local.properties
+secrets.properties
+*.apk
+*.jks
+*.keystore
+*.p12
